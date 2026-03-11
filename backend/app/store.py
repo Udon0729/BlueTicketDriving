@@ -25,7 +25,7 @@ class GpsPoint:
 class Violation:
     id: str
     trip_id: str
-    type: str  # "signal_ignore" | "no_stop"
+    type: str  # "signal_ignore" | "no_stop" | "right_side_riding" | "sidewalk_riding"
     detected_at: str
     lat: float
     lng: float

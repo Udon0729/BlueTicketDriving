@@ -1,18 +1,24 @@
-import { AlertTriangle, Octagon } from 'lucide-react'
+import { AlertTriangle, Octagon, ArrowRightLeft, Footprints } from 'lucide-react'
 import type { DbViolation } from '../lib/db'
 import { violationTypeLabel, formatDate } from '../lib/mockData'
 
+const styleMap = {
+  signal_ignore: { bg: 'bg-red-50', icon: 'bg-red-100 text-red-600', Icon: AlertTriangle },
+  no_stop: { bg: 'bg-amber-50', icon: 'bg-amber-100 text-amber-600', Icon: Octagon },
+  right_side_riding: { bg: 'bg-orange-50', icon: 'bg-orange-100 text-orange-600', Icon: ArrowRightLeft },
+  sidewalk_riding: { bg: 'bg-purple-50', icon: 'bg-purple-100 text-purple-600', Icon: Footprints },
+} as const
+
 export function ViolationCard({ violation }: { violation: DbViolation }) {
-  const isSignal = violation.type === 'signal_ignore'
+  const style = styleMap[violation.type] ?? styleMap.signal_ignore
+  const { Icon } = style
 
   return (
-    <div className={`flex items-center gap-3 p-3 rounded-xl ${isSignal ? 'bg-red-50' : 'bg-amber-50'}`}>
+    <div className={`flex items-center gap-3 p-3 rounded-xl ${style.bg}`}>
       <div
-        className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${
-          isSignal ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'
-        }`}
+        className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${style.icon}`}
       >
-        {isSignal ? <AlertTriangle size={20} /> : <Octagon size={20} />}
+        <Icon size={20} />
       </div>
       <div className="flex-1 min-w-0">
         <p className="font-semibold text-sm text-gray-900">{violationTypeLabel(violation.type)}</p>

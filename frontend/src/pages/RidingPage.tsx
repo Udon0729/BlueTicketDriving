@@ -102,7 +102,9 @@ export function RidingPage() {
     const lat = state.currentLat ?? 0
     const lng = state.currentLng ?? 0
 
-    const types: Array<'signal_ignore' | 'no_stop'> = ['signal_ignore', 'no_stop']
+    const types: Array<'signal_ignore' | 'no_stop' | 'right_side_riding' | 'sidewalk_riding'> = [
+      'signal_ignore', 'no_stop', 'right_side_riding', 'sidewalk_riding',
+    ]
     const type = types[Math.floor(Math.random() * types.length)]
 
     const frame = camera.captureFrame()

@@ -20,6 +20,17 @@ export function formatDistance(meters: number): string {
   return `${meters} m`
 }
 
-export function violationTypeLabel(type: 'signal_ignore' | 'no_stop'): string {
-  return type === 'signal_ignore' ? '信号無視' : '一時不停止'
+export function violationTypeLabel(
+  type: 'signal_ignore' | 'no_stop' | 'right_side_riding' | 'sidewalk_riding',
+): string {
+  switch (type) {
+    case 'signal_ignore':
+      return '信号無視'
+    case 'no_stop':
+      return '一時不停止'
+    case 'right_side_riding':
+      return '右側通行'
+    case 'sidewalk_riding':
+      return '歩道通行'
+  }
 }
