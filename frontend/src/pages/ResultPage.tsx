@@ -2,7 +2,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet'
 import { icon } from 'leaflet'
-import { ArrowLeft, AlertTriangle, Loader2 } from 'lucide-react'
+import { ArrowLeft, AlertTriangle, Loader2, Home } from 'lucide-react'
 import { db } from '../lib/db'
 import { formatDate, formatDuration, formatDistance, violationTypeLabel } from '../lib/mockData'
 import { ViolationCard } from '../components/ViolationCard'
@@ -81,7 +81,7 @@ export function ResultPage() {
     <div className="min-h-full bg-gray-50">
       {/* Header */}
       <div className="bg-white sticky top-0 z-50 flex items-center gap-3 px-4 py-3 border-b border-gray-100">
-        <button onClick={() => navigate(-1)} className="p-1">
+        <button onClick={() => navigate('/')} className="p-1">
           <ArrowLeft size={24} className="text-gray-700" />
         </button>
         <h1 className="text-lg font-bold text-gray-900">走行結果</h1>
@@ -178,6 +178,15 @@ export function ResultPage() {
             <p className="text-sm text-gray-500">安全な走行ができました</p>
           </div>
         )}
+
+        {/* Back to home */}
+        <button
+          onClick={() => navigate('/')}
+          className="w-full mt-6 mb-4 bg-primary text-white font-bold py-3 rounded-2xl flex items-center justify-center gap-2 transition active:bg-primary/80"
+        >
+          <Home size={18} />
+          ホームに戻る
+        </button>
       </div>
     </div>
   )
