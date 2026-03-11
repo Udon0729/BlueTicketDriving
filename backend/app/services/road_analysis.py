@@ -1,13 +1,12 @@
-"""Detect wrong-side riding and sidewalk riding violations.
+"""Detect wrong-side (right-side) riding violations.
 
 Japan requires bicycles to ride on the LEFT side of the road.
-Riding on sidewalks is generally prohibited for adults (age >= 13).
 """
 
 import math
 
 from app.models.schemas import GpsPointIn
-from app.services.overpass import OverpassCache, RoadWay, SidewalkWay
+from app.services.overpass import OverpassCache, RoadWay
 from app.store import GpsPoint
 
 
@@ -97,26 +96,6 @@ def _find_nearest_road(
     return best_road, best_idx, dist, best_cross
 
 
-def _nearest_sidewalk_dist(
-    lat: float,
-    lng: float,
-    sidewalks: list[SidewalkWay],
-) -> float:
-    """Distance in meters to the nearest sidewalk segment."""
-    cos_lat = math.cos(math.radians(lat))
-    best_dsq = float("inf")
-
-    for sw in sidewalks:
-        geom = sw.geometry
-        for i in range(len(geom) - 1):
-            dsq, _ = _point_seg_dist_and_cross(
-                lat, lng, geom[i][0], geom[i][1], geom[i + 1][0], geom[i + 1][1], cos_lat
-            )
-            if dsq < best_dsq:
-                best_dsq = dsq
-
-    return math.sqrt(best_dsq) if best_dsq < float("inf") else float("inf")
-
 
 def _is_wrong_side(
     lat: float,
@@ -157,11 +136,10 @@ async def check_road_violations(
     *,
     window_size: int = 20,
     wrong_side_ratio: float = 0.70,
-    sidewalk_ratio: float = 0.70,
     min_speed: float = 5.0,
     min_classifiable: int = 5,
 ) -> list[dict]:
-    """Check for wrong-side riding and sidewalk riding.
+    """Check for wrong-side (right-side) riding.
 
     Uses a sliding window over accumulated GPS history.
     Returns a list of violation dicts: {type, lat, lng, detected_at}.
@@ -172,8 +150,8 @@ async def check_road_violations(
     center_lat = sum(p.lat for p in new_points) / len(new_points)
     center_lng = sum(p.lng for p in new_points) / len(new_points)
 
-    roads, sidewalks = await cache.get_road_geometry(center_lat, center_lng)
-    if not roads and not sidewalks:
+    roads, _sidewalks = await cache.get_road_geometry(center_lat, center_lng)
+    if not roads:
         return []
 
     # Use last `window_size` points from accumulated history
@@ -182,7 +160,6 @@ async def check_road_violations(
         return []
 
     wrong_side_votes: list[bool] = []
-    sidewalk_votes: list[bool] = []
 
     for i in range(len(recent)):
         pt = recent[i]
@@ -199,43 +176,20 @@ async def check_road_violations(
         else:
             continue
 
-        # Wrong-side check
         ws = _is_wrong_side(pt.lat, pt.lng, cyc_bearing, roads)
         if ws is not None:
             wrong_side_votes.append(ws)
-
-        # Sidewalk check
-        if sidewalks:
-            sw_dist = _nearest_sidewalk_dist(pt.lat, pt.lng, sidewalks)
-            _, _, road_dist, _ = _find_nearest_road(pt.lat, pt.lng, roads)
-            if sw_dist < 8.0 and road_dist > sw_dist:
-                sidewalk_votes.append(True)
-            elif sw_dist < float("inf") or road_dist < float("inf"):
-                sidewalk_votes.append(False)
-
-    violations: list[dict] = []
-    ref = new_points[-1]
 
     if (
         len(wrong_side_votes) >= min_classifiable
         and sum(wrong_side_votes) / len(wrong_side_votes) >= wrong_side_ratio
     ):
-        violations.append({
+        ref = new_points[-1]
+        return [{
             "type": "right_side_riding",
             "lat": ref.lat,
             "lng": ref.lng,
             "detected_at": ref.recorded_at,
-        })
+        }]
 
-    if (
-        len(sidewalk_votes) >= min_classifiable
-        and sum(sidewalk_votes) / len(sidewalk_votes) >= sidewalk_ratio
-    ):
-        violations.append({
-            "type": "sidewalk_riding",
-            "lat": ref.lat,
-            "lng": ref.lng,
-            "detected_at": ref.recorded_at,
-        })
-
-    return violations
+    return []

@@ -20,7 +20,6 @@ class Settings(BaseSettings):
 
     # Road analysis thresholds
     road_wrong_side_ratio: float = 0.70
-    road_sidewalk_ratio: float = 0.70
     road_analysis_window: int = 20
     road_violation_cooldown_s: float = 120.0
 

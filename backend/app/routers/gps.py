@@ -69,7 +69,6 @@ async def receive_gps(body: GpsBatchRequest, request: Request) -> GpsBatchRespon
         cache,
         window_size=settings.road_analysis_window,
         wrong_side_ratio=settings.road_wrong_side_ratio,
-        sidewalk_ratio=settings.road_sidewalk_ratio,
     )
 
     # Apply cooldown to road violations
