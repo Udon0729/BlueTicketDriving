@@ -10,10 +10,12 @@ export function HistoryPage() {
   const trips = useLiveQuery(async () => {
     const allTrips = await db.trips.orderBy('startedAt').reverse().toArray()
     return Promise.all(
-      allTrips.map(async (t) => ({
-        ...t,
-        violationCount: await db.violations.where('tripId').equals(t.id).count(),
-      })),
+      allTrips.map(async (t) => {
+        const results = await db.intersectionResults.where('tripId').equals(t.id).toArray()
+        const total = results.length
+        const stopped = results.filter((r) => r.stopped).length
+        return { ...t, totalIntersections: total, missedCount: total - stopped }
+      }),
     )
   })
 
@@ -42,15 +44,15 @@ export function HistoryPage() {
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                {trip.violationCount > 0 ? (
+                {trip.missedCount > 0 ? (
                   <span className="bg-red-100 text-red-600 text-xs font-bold px-2 py-1 rounded-full">
-                    違反 {trip.violationCount}
+                    未停止 {trip.missedCount}
                   </span>
-                ) : (
+                ) : trip.totalIntersections > 0 ? (
                   <span className="bg-green-100 text-green-600 text-xs font-bold px-2 py-1 rounded-full">
-                    安全
+                    全停止
                   </span>
-                )}
+                ) : null}
                 <ChevronRight size={16} className="text-gray-300" />
               </div>
             </button>

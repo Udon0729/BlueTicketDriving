@@ -10,24 +10,26 @@ export function HomePage() {
   const tripsWithCounts = useLiveQuery(async () => {
     const allTrips = await db.trips.orderBy('startedAt').reverse().toArray()
     return Promise.all(
-      allTrips.map(async (t) => ({
-        ...t,
-        violationCount: await db.violations.where('tripId').equals(t.id).count(),
-      })),
+      allTrips.map(async (t) => {
+        const results = await db.intersectionResults.where('tripId').equals(t.id).toArray()
+        const total = results.length
+        const stopped = results.filter((r) => r.stopped).length
+        return { ...t, totalIntersections: total, missedCount: total - stopped }
+      }),
     )
   })
 
   const trips = tripsWithCounts ?? []
   const recentTrips = trips.slice(0, 3)
   const monthlyRides = trips.length
-  const monthlyViolations = trips.reduce((sum, t) => sum + t.violationCount, 0)
+  const totalMissed = trips.reduce((sum, t) => sum + t.missedCount, 0)
 
   return (
     <div className="px-4 pt-6 max-w-lg mx-auto">
       <h1 className="text-lg font-bold text-gray-900">こんにちは</h1>
       <p className="text-sm text-gray-500 mb-6">安全な走行を心がけましょう</p>
 
-      {/* Stats */}
+      {/* 統計 */}
       <div className="grid grid-cols-2 gap-3 mb-6">
         <div className="bg-white rounded-2xl p-4 shadow-sm">
           <p className="text-xs text-gray-500">走行回数</p>
@@ -37,15 +39,15 @@ export function HomePage() {
           </p>
         </div>
         <div className="bg-white rounded-2xl p-4 shadow-sm">
-          <p className="text-xs text-gray-500">違反件数</p>
-          <p className={`text-2xl font-bold ${monthlyViolations > 0 ? 'text-danger' : 'text-success'}`}>
-            {monthlyViolations}
-            <span className="text-sm font-normal text-gray-500"> 件</span>
+          <p className="text-xs text-gray-500">未停止箇所</p>
+          <p className={`text-2xl font-bold ${totalMissed > 0 ? 'text-danger' : 'text-success'}`}>
+            {totalMissed}
+            <span className="text-sm font-normal text-gray-500"> 箇所</span>
           </p>
         </div>
       </div>
 
-      {/* Start Ride Button */}
+      {/* 走行開始ボタン */}
       <button
         onClick={() => navigate('/riding')}
         className="w-full bg-primary active:bg-primary-dark text-white rounded-2xl p-6 flex items-center justify-center gap-3 shadow-lg shadow-blue-200 transition mb-6"
@@ -54,7 +56,7 @@ export function HomePage() {
         <span className="text-xl font-bold">走行開始</span>
       </button>
 
-      {/* Recent Rides */}
+      {/* 最近の走行 */}
       <div>
         <h2 className="text-sm font-semibold text-gray-500 mb-3">最近の走行</h2>
 
@@ -79,15 +81,15 @@ export function HomePage() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  {trip.violationCount > 0 ? (
+                  {trip.missedCount > 0 ? (
                     <span className="bg-red-100 text-danger text-xs font-bold px-2 py-1 rounded-full">
-                      違反 {trip.violationCount}
+                      未停止 {trip.missedCount}
                     </span>
-                  ) : (
+                  ) : trip.totalIntersections > 0 ? (
                     <span className="bg-green-100 text-success text-xs font-bold px-2 py-1 rounded-full">
-                      安全
+                      全停止
                     </span>
-                  )}
+                  ) : null}
                   <ChevronRight size={16} className="text-gray-300" />
                 </div>
               </button>
