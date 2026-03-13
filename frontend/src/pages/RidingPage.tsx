@@ -197,15 +197,17 @@ export function RidingPage() {
         }),
       })
 
+      console.log('[BTD] POST', tripUrl, '→', tripRes.status, tripRes.url)
       if (!tripRes.ok) {
         const errBody = await tripRes.json().catch(() => null)
-        console.error('[BTD] POST', tripUrl, '→', tripRes.status, errBody)
+        console.error('[BTD] POST', tripUrl, 'FAILED:', tripRes.status, errBody)
         throw new Error(errBody?.detail ?? `トリップ作成に失敗 (HTTP ${tripRes.status})`)
       }
 
       const routeUrl = `/api/trips/${tripIdNew}/route?origin_lat=${originLat}&origin_lng=${originLng}`
       console.log('[BTD] POST', routeUrl)
       const routeRes = await apiFetch(routeUrl, { method: 'POST' })
+      console.log('[BTD] POST', routeUrl, '→', routeRes.status, routeRes.url)
 
       if (!routeRes.ok) {
         const errBody = await routeRes.json().catch(() => null)

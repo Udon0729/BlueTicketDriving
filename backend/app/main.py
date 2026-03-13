@@ -78,6 +78,14 @@ app.include_router(trips.router)
 app.include_router(gps.router)
 
 
+@app.middleware("http")
+async def log_requests(request, call_next):
+    logger.info(">>> %s %s", request.method, request.url.path)
+    response = await call_next(request)
+    logger.info("<<< %s %s → %s", request.method, request.url.path, response.status_code)
+    return response
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
