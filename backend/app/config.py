@@ -5,7 +5,12 @@ class Settings(BaseSettings):
     cors_origins: list[str] = [
         "https://localhost:5173",
         "https://127.0.0.1:5173",
+        "https://localhost:4173",
+        "http://localhost:5173",
+        "http://localhost:8000",
     ]
+    # LAN内からのアクセスを許可（開発用）
+    cors_allow_all: bool = True
 
     # OSRM
     osrm_base_url: str = "https://router.project-osrm.org"
