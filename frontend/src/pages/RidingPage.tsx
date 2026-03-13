@@ -684,7 +684,7 @@ export function RidingPage() {
       {/* 走行中の地図表示 */}
       <div className="flex-1 relative overflow-hidden">
         <MapContainer
-          center={currentLat != null ? [currentLat, currentLng!] : [35.6812, 139.7671]}
+          center={currentLat != null ? [currentLat, currentLng!] : originLat != null ? [originLat, originLng!] : [35.6812, 139.7671]}
           zoom={16}
           style={{ height: '100%' }}
           scrollWheelZoom={false}
