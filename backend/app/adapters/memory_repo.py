@@ -3,19 +3,17 @@
 Replace with SupabaseRepository when ready for production.
 """
 
-from datetime import datetime, timezone
-
-from app.domain.models import GpsPoint, Trip, Violation
+from app.domain.models import GpsPoint, IntersectionResult, Route, Trip
 
 
 class InMemoryRepository:
-    """Satisfies TripRepository, GpsRepository, and ViolationRepository protocols."""
+    """Satisfies TripRepository, GpsRepository, and RouteRepository protocols."""
 
     def __init__(self) -> None:
         self._trips: dict[str, Trip] = {}
         self._gps: dict[str, list[GpsPoint]] = {}
-        self._violations: dict[str, list[Violation]] = {}
-        self._violation_times: dict[tuple[str, str], datetime] = {}
+        self._routes: dict[str, Route] = {}
+        self._intersection_results: dict[str, list[IntersectionResult]] = {}
 
     # -- TripRepository --
 
@@ -36,14 +34,18 @@ class InMemoryRepository:
     def append_points(self, trip_id: str, points: list[GpsPoint]) -> None:
         self._gps.setdefault(trip_id, []).extend(points)
 
-    # -- ViolationRepository --
+    # -- RouteRepository --
 
-    def get_violations(self, trip_id: str) -> list[Violation]:
-        return self._violations.get(trip_id, [])
+    def save_route(self, trip_id: str, route: Route) -> None:
+        self._routes[trip_id] = route
 
-    def save_violation(self, trip_id: str, violation: Violation) -> None:
-        self._violations.setdefault(trip_id, []).append(violation)
-        self._violation_times[(trip_id, violation.type)] = datetime.now(timezone.utc)
+    def get_route(self, trip_id: str) -> Route | None:
+        return self._routes.get(trip_id)
 
-    def last_violation_time(self, trip_id: str, vtype: str) -> datetime | None:
-        return self._violation_times.get((trip_id, vtype))
+    def save_intersection_results(
+        self, trip_id: str, results: list[IntersectionResult],
+    ) -> None:
+        self._intersection_results[trip_id] = results
+
+    def get_intersection_results(self, trip_id: str) -> list[IntersectionResult]:
+        return self._intersection_results.get(trip_id, [])

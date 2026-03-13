@@ -5,16 +5,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from ultralytics import YOLO
 
 from app.adapters.memory_repo import InMemoryRepository
-from app.adapters.overpass_gateway import OverpassGateway
-from app.adapters.routers import camera, gps, trips
-from app.adapters.yolo_gateway import YoloGateway
+from app.adapters.osrm_gateway import OsrmGateway
+from app.adapters.routers import gps, trips
 from app.config import Settings
-from app.domain.detectors import RedSignalDetector, StopSignDetector
-from app.usecases.frame_analysis import FrameAnalysisUseCase
 from app.usecases.gps_analysis import GpsAnalysisUseCase
+from app.usecases.route_planning import RoutePlanningUseCase
 
 settings = Settings()
 
@@ -24,55 +21,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ---- Adapters (outermost layer) ----
     repo = InMemoryRepository()
 
-    overpass = OverpassGateway(
-        ttl_seconds=settings.overpass_cache_ttl_seconds,
-        query_radius_m=settings.overpass_query_radius_m,
+    osrm = OsrmGateway(
+        base_url=settings.osrm_base_url,
+        min_roads=settings.intersection_min_roads,
     )
-
-    yolo_model = YOLO(settings.yolo_model)
-    yolo = YoloGateway(
-        yolo_model,
-        confidence=settings.yolo_confidence,
-        min_bbox_ratio=settings.red_signal_min_bbox_ratio,
-    )
-
-    # ---- Domain detectors (Strategy pattern) ----
-    gps_detectors = [
-        StopSignDetector(
-            source=overpass,
-            radius_m=settings.stop_sign_radius_m,
-            speed_threshold=settings.stop_sign_speed_threshold,
-        ),
-    ]
-
-    frame_detectors = [
-        RedSignalDetector(
-            analyzer=yolo,
-            signal_source=overpass,
-            speed_threshold=settings.red_signal_speed_threshold,
-            proximity_m=settings.red_signal_proximity_m,
-        ),
-    ]
 
     # ---- Use cases (application layer) ----
-    gps_usecase = GpsAnalysisUseCase(
-        detectors=gps_detectors,
-        gps_repo=repo,
-        violation_repo=repo,
-        cooldown_s=settings.violation_cooldown_s,
+    route_usecase = RoutePlanningUseCase(
+        routing_service=osrm,
+        repo=repo,
     )
 
-    frame_usecase = FrameAnalysisUseCase(
-        detectors=frame_detectors,
-        violation_repo=repo,
-        cooldown_s=settings.violation_cooldown_s,
+    gps_usecase = GpsAnalysisUseCase(
+        gps_repo=repo,
+        route_repo=repo,
+        trip_repo=repo,
+        routing_service=osrm,
+        radius_m=settings.intersection_radius_m,
+        speed_threshold=settings.intersection_speed_threshold,
+        off_route_threshold_m=settings.off_route_threshold_m,
     )
 
     # ---- Expose to routers via app.state ----
     app.state.settings = settings
     app.state.repo = repo
     app.state.gps_usecase = gps_usecase
-    app.state.frame_usecase = frame_usecase
+    app.state.route_usecase = route_usecase
 
     yield
 
@@ -89,7 +63,6 @@ app.add_middleware(
 
 app.include_router(trips.router)
 app.include_router(gps.router)
-app.include_router(camera.router)
 
 
 @app.get("/health")

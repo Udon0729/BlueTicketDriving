@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import BaseModel
 
 
@@ -23,16 +21,16 @@ class GpsBatchRequest(BaseModel):
     points: list[GpsPointIn]
 
 
-class ViolationOut(BaseModel):
-    type: Literal["signal_ignore", "no_stop"]
-    lat: float
-    lng: float
-    detected_at: str
+class IntersectionUpdateOut(BaseModel):
+    index: int
+    stopped: bool
+    min_speed_kmh: float | None = None
 
 
 class GpsBatchResponse(BaseModel):
     saved: int
-    violations: list[ViolationOut]
+    intersection_updates: list[IntersectionUpdateOut]
+    rerouted: bool = False
 
 
 # --- Trips ---
@@ -40,6 +38,24 @@ class GpsBatchResponse(BaseModel):
 
 class TripCreateRequest(BaseModel):
     id: str | None = None
+    destination_lat: float | None = None
+    destination_lng: float | None = None
+
+
+class IntersectionOut(BaseModel):
+    index: int
+    lat: float
+    lng: float
+    num_roads: int
+    stopped: bool = False
+    min_speed_kmh: float | None = None
+
+
+class RouteOut(BaseModel):
+    geometry: list[list[float]]  # [[lat, lng], ...]
+    intersections: list[IntersectionOut]
+    distance_m: float
+    duration_s: float
 
 
 class TripOut(BaseModel):
@@ -47,4 +63,12 @@ class TripOut(BaseModel):
     started_at: str
     ended_at: str | None = None
     distance_m: float = 0.0
-    violation_count: int = 0
+    destination_lat: float | None = None
+    destination_lng: float | None = None
+    route: RouteOut | None = None
+
+
+class IntersectionsSummaryOut(BaseModel):
+    total: int
+    stopped: int
+    results: list[IntersectionOut]

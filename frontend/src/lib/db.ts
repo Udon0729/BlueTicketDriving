@@ -5,6 +5,8 @@ export interface DbTrip {
   startedAt: string
   endedAt?: string
   distanceM: number
+  destinationLat?: number
+  destinationLng?: number
 }
 
 export interface DbGpsPoint {
@@ -18,26 +20,36 @@ export interface DbGpsPoint {
   synced: boolean
 }
 
-export interface DbViolation {
+export interface DbIntersectionResult {
   id?: number
   tripId: string
-  type: 'signal_ignore' | 'no_stop'
-  detectedAt: string
+  index: number
   lat: number
   lng: number
-  photoBlob?: Blob
+  numRoads: number
+  stopped: boolean
+  minSpeedKmh: number | null
+}
+
+export interface DbRoute {
+  tripId: string
+  geometry: number[][]  // [[lat, lng], ...]
+  distanceM: number
+  durationS: number
 }
 
 const db = new Dexie('BlueTicketDriving') as Dexie & {
   trips: EntityTable<DbTrip, 'id'>
   gpsPoints: EntityTable<DbGpsPoint, 'id'>
-  violations: EntityTable<DbViolation, 'id'>
+  intersectionResults: EntityTable<DbIntersectionResult, 'id'>
+  routes: EntityTable<DbRoute, 'tripId'>
 }
 
-db.version(1).stores({
+db.version(2).stores({
   trips: 'id, startedAt',
   gpsPoints: '++id, tripId, synced, recordedAt',
-  violations: '++id, tripId',
+  intersectionResults: '++id, tripId, index, [tripId+index]',
+  routes: 'tripId',
 })
 
 export { db }

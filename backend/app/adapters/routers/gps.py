@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Request
 
 from app.domain.models import GpsPoint
-from app.schemas import GpsBatchRequest, GpsBatchResponse, ViolationOut
+from app.schemas import GpsBatchRequest, GpsBatchResponse, IntersectionUpdateOut
 
 router = APIRouter(prefix="/api", tags=["gps"])
 
@@ -24,12 +24,18 @@ async def receive_gps(body: GpsBatchRequest, request: Request) -> GpsBatchRespon
         if p.accuracy_m <= 20
     ]
 
-    violations = await usecase.execute(body.trip_id, points)
+    result = await usecase.execute(body.trip_id, points)
 
     return GpsBatchResponse(
-        saved=len(points),
-        violations=[
-            ViolationOut(type=v.type, lat=v.lat, lng=v.lng, detected_at=v.detected_at)
-            for v in violations
+        saved=result.saved,
+        intersection_updates=[
+            IntersectionUpdateOut(
+                index=r.intersection.index,
+                stopped=r.stopped,
+                min_speed_kmh=r.min_speed_kmh,
+            )
+            for r in result.intersection_results
+            if r.stopped or r.min_speed_kmh is not None
         ],
+        rerouted=result.rerouted,
     )

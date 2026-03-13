@@ -1,76 +1,231 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Camera, MapPin, Shield, Square, AlertTriangle } from 'lucide-react'
-import { useRideStore } from '../stores/rideStore'
+import { MapContainer, TileLayer, Marker, Polyline, Popup, useMapEvents } from 'react-leaflet'
+import { icon } from 'leaflet'
+import { MapPin, Square, AlertTriangle, Navigation, Search, Loader2, CheckCircle } from 'lucide-react'
+import { useRideStore, type RouteData } from '../stores/rideStore'
 import { useGpsTracker } from '../hooks/useGpsTracker'
-import { useCameraStream } from '../hooks/useCameraStream'
 import { useWakeLock } from '../hooks/useWakeLock'
 import { db } from '../lib/db'
-import { apiFetch } from '../lib/api'
+import { apiFetch, searchAddress } from '../lib/api'
+import 'leaflet/dist/leaflet.css'
+
+const destinationIcon = icon({
+  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+})
+
+const defaultIcon = icon({
+  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+})
+
+const intersectionStoppedIcon = icon({
+  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+  iconSize: [20, 33],
+  iconAnchor: [10, 33],
+})
+
+const intersectionPendingIcon = icon({
+  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-orange.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+  iconSize: [20, 33],
+  iconAnchor: [10, 33],
+})
+
+/** Component to handle map click for destination selection */
+function MapClickHandler({ onMapClick }: { onMapClick: (lat: number, lng: number) => void }) {
+  useMapEvents({
+    click(e) {
+      onMapClick(e.latlng.lat, e.latlng.lng)
+    },
+  })
+  return null
+}
 
 export function RidingPage() {
   const navigate = useNavigate()
-  const videoRef = useRef<HTMLVideoElement>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Store state
   const isRiding = useRideStore((s) => s.isRiding)
   const tripId = useRideStore((s) => s.tripId)
   const currentSpeed = useRideStore((s) => s.currentSpeed)
   const currentAccuracy = useRideStore((s) => s.currentAccuracy)
   const currentLat = useRideStore((s) => s.currentLat)
-  const violationCount = useRideStore((s) => s.violationCount)
+  const currentLng = useRideStore((s) => s.currentLng)
   const elapsedSeconds = useRideStore((s) => s.elapsedSeconds)
+  const destinationLat = useRideStore((s) => s.destinationLat)
+  const destinationLng = useRideStore((s) => s.destinationLng)
+  const destinationName = useRideStore((s) => s.destinationName)
+  const route = useRideStore((s) => s.route)
+  const totalIntersections = useRideStore((s) => s.totalIntersections)
+  const stoppedIntersections = useRideStore((s) => s.stoppedIntersections)
   const startRide = useRideStore((s) => s.startRide)
   const endRide = useRideStore((s) => s.endRide)
-  const incrementViolations = useRideStore((s) => s.incrementViolations)
+  const setDestination = useRideStore((s) => s.setDestination)
 
   const gps = useGpsTracker()
-  const camera = useCameraStream(videoRef, { fps: 2 })
   const wakeLock = useWakeLock()
 
-  const [showAlert, setShowAlert] = useState(false)
-  const alertTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Phase state: 'setup' | 'riding'
+  const [phase, setPhase] = useState<'setup' | 'riding'>('setup')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<Array<{ lat: number; lng: number; display_name: string }>>([])
+  const [isSearching, setIsSearching] = useState(false)
+  const [isLoadingRoute, setIsLoadingRoute] = useState(false)
+  const [myLocation, setMyLocation] = useState<{ lat: number; lng: number } | null>(null)
+  const [routeError, setRouteError] = useState<string | null>(null)
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Start ride on mount
+  // Get current location on mount
   useEffect(() => {
-    const init = async () => {
-      const id = crypto.randomUUID()
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setMyLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude })
+      },
+      () => {
+        // Fallback: Tokyo
+        setMyLocation({ lat: 35.6812, lng: 139.7671 })
+      },
+      { enableHighAccuracy: true, timeout: 10000 },
+    )
+  }, [])
 
-      // Store locally
+  // Address search with debounce
+  const handleSearch = useCallback(async (query: string) => {
+    setSearchQuery(query)
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current)
+    if (query.length < 2) {
+      setSearchResults([])
+      return
+    }
+    searchTimeoutRef.current = setTimeout(async () => {
+      setIsSearching(true)
+      const results = await searchAddress(query)
+      setSearchResults(results)
+      setIsSearching(false)
+    }, 500)
+  }, [])
+
+  const handleSelectSearchResult = useCallback(
+    (result: { lat: number; lng: number; display_name: string }) => {
+      setDestination(result.lat, result.lng, result.display_name)
+      setSearchResults([])
+      setSearchQuery('')
+    },
+    [setDestination],
+  )
+
+  const handleMapClick = useCallback(
+    (lat: number, lng: number) => {
+      setDestination(lat, lng, null)
+    },
+    [setDestination],
+  )
+
+  // Fetch route from OSRM via backend
+  const handleFetchRoute = useCallback(async () => {
+    if (!myLocation || destinationLat == null || destinationLng == null) return
+    setIsLoadingRoute(true)
+    setRouteError(null)
+
+    try {
+      // Create trip with destination
+      const tripIdNew = crypto.randomUUID()
+
       await db.trips.add({
-        id,
+        id: tripIdNew,
         startedAt: new Date().toISOString(),
         distanceM: 0,
+        destinationLat,
+        destinationLng,
       })
 
-      // Also create on backend (best-effort)
-      try {
-        await apiFetch('/api/trips', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id }),
+      const tripRes = await apiFetch('/api/trips', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: tripIdNew,
+          destination_lat: destinationLat,
+          destination_lng: destinationLng,
+        }),
+      })
+
+      if (!tripRes.ok) throw new Error('Trip creation failed')
+
+      // Plan route
+      const routeRes = await apiFetch(
+        `/api/trips/${tripIdNew}/route?origin_lat=${myLocation.lat}&origin_lng=${myLocation.lng}`,
+        { method: 'POST' },
+      )
+
+      if (!routeRes.ok) throw new Error('Route planning failed')
+
+      const tripData = await routeRes.json()
+      const routeData: RouteData = tripData.route
+
+      // Save route to IndexedDB
+      await db.routes.put({
+        tripId: tripIdNew,
+        geometry: routeData.geometry,
+        distanceM: routeData.distance_m,
+        durationS: routeData.duration_s,
+      })
+
+      // Save intersection results to IndexedDB
+      for (const ix of routeData.intersections) {
+        await db.intersectionResults.add({
+          tripId: tripIdNew,
+          index: ix.index,
+          lat: ix.lat,
+          lng: ix.lng,
+          numRoads: ix.num_roads,
+          stopped: false,
+          minSpeedKmh: null,
         })
-      } catch {
-        // Backend may be offline — local-first is fine
       }
 
-      startRide(id)
-      wakeLock.request()
-      gps.start(id)
-      camera.start(id) // pass tripId for WebSocket connection
-
-      timerRef.current = setInterval(() => {
-        useRideStore.getState().tick()
-      }, 1000)
+      // Store tripId, route, destination for riding phase.
+      // Do NOT call startRide here — that sets isRiding=true.
+      // The ride starts only when the user presses "走行開始".
+      useRideStore.setState({
+        tripId: tripIdNew,
+        route: routeData,
+        destinationLat,
+        destinationLng,
+        destinationName,
+        totalIntersections: routeData.intersections.length,
+        stoppedIntersections: 0,
+      })
+    } catch (e) {
+      setRouteError(e instanceof Error ? e.message : 'ルート取得に失敗しました')
+    } finally {
+      setIsLoadingRoute(false)
     }
+  }, [myLocation, destinationLat, destinationLng, destinationName])
 
-    init()
+  // Start the actual ride
+  const handleStartRiding = useCallback(() => {
+    const currentTripId = useRideStore.getState().tripId
+    if (!currentTripId) return
 
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    startRide(currentTripId)
+    wakeLock.request()
+    gps.start(currentTripId)
+
+    timerRef.current = setInterval(() => {
+      useRideStore.getState().tick()
+    }, 1000)
+
+    setPhase('riding')
+  }, [startRide, gps, wakeLock])
 
   const handleEnd = useCallback(async () => {
     if (!tripId) return
@@ -81,10 +236,8 @@ export function RidingPage() {
     }
 
     await gps.stop(tripId)
-    camera.stop()
     await wakeLock.release()
 
-    // End trip on backend (best-effort)
     try {
       await apiFetch(`/api/trips/${tripId}/end`, { method: 'PATCH' })
     } catch {
@@ -94,40 +247,13 @@ export function RidingPage() {
     const currentTripId = tripId
     endRide()
     navigate(`/result/${currentTripId}`)
-  }, [tripId, gps, camera, wakeLock, endRide, navigate])
+  }, [tripId, gps, wakeLock, endRide, navigate])
 
-  // Simulate violation (debug: double-tap the violation counter)
-  const handleSimulateViolation = useCallback(async () => {
-    if (!tripId) return
-    const state = useRideStore.getState()
-    const lat = state.currentLat ?? 0
-    const lng = state.currentLng ?? 0
-
-    const types: Array<'signal_ignore' | 'no_stop'> = [
-      'signal_ignore', 'no_stop',
-    ]
-    const type = types[Math.floor(Math.random() * types.length)]
-
-    const frame = camera.captureFrame()
-
-    await db.violations.add({
-      tripId,
-      type,
-      detectedAt: new Date().toISOString(),
-      lat,
-      lng,
-      photoBlob: frame ?? undefined,
-    })
-
-    incrementViolations()
-
-    // Show alert
-    setShowAlert(true)
-    if (alertTimeoutRef.current) clearTimeout(alertTimeoutRef.current)
-    alertTimeoutRef.current = setTimeout(() => {
-      setShowAlert(false)
-    }, 3000)
-  }, [tripId, camera, incrementViolations])
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+  }, [])
 
   const formatTime = (sec: number) => {
     const m = Math.floor(sec / 60)
@@ -135,66 +261,223 @@ export function RidingPage() {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
   }
 
+  // ===== PHASE 1: Destination setup =====
+  if (phase === 'setup') {
+    const mapCenter: [number, number] = destinationLat != null && destinationLng != null
+      ? [destinationLat, destinationLng]
+      : myLocation
+        ? [myLocation.lat, myLocation.lng]
+        : [35.6812, 139.7671]
+
+    return (
+      <div className="h-full bg-gray-50 flex flex-col">
+        {/* Header */}
+        <div className="bg-white px-4 py-3 border-b border-gray-100">
+          <h1 className="text-lg font-bold text-gray-900">目的地を設定</h1>
+          <p className="text-xs text-gray-500 mt-0.5">住所検索または地図をタップして選択</p>
+        </div>
+
+        {/* Search bar */}
+        <div className="bg-white px-4 py-3 border-b border-gray-100">
+          <div className="relative">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => handleSearch(e.target.value)}
+              placeholder="住所を検索..."
+              className="w-full pl-10 pr-4 py-2.5 bg-gray-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+            {isSearching && (
+              <Loader2 size={16} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-gray-400" />
+            )}
+          </div>
+
+          {/* Search results */}
+          {searchResults.length > 0 && (
+            <div className="mt-2 bg-white border border-gray-200 rounded-xl overflow-hidden shadow-lg max-h-48 overflow-y-auto">
+              {searchResults.map((r, i) => (
+                <button
+                  key={i}
+                  onClick={() => handleSelectSearchResult(r)}
+                  className="w-full text-left px-3 py-2.5 text-sm hover:bg-gray-50 border-b border-gray-100 last:border-0"
+                >
+                  {r.display_name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Map */}
+        <div className="flex-1 relative">
+          <MapContainer center={mapCenter} zoom={15} style={{ height: '100%' }} scrollWheelZoom>
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
+            <MapClickHandler onMapClick={handleMapClick} />
+            {myLocation && (
+              <Marker position={[myLocation.lat, myLocation.lng]} icon={defaultIcon}>
+                <Popup>現在地</Popup>
+              </Marker>
+            )}
+            {destinationLat != null && destinationLng != null && (
+              <Marker position={[destinationLat, destinationLng]} icon={destinationIcon}>
+                <Popup>{destinationName ?? '目的地'}</Popup>
+              </Marker>
+            )}
+            {/* Show route preview */}
+            {route && (
+              <Polyline
+                positions={route.geometry.map((c) => [c[0], c[1]] as [number, number])}
+                color="#2563eb"
+                weight={4}
+              />
+            )}
+            {/* Show intersection markers on preview */}
+            {route?.intersections.map((ix) => (
+              <Marker key={ix.index} position={[ix.lat, ix.lng]} icon={intersectionPendingIcon}>
+                <Popup>交差点 #{ix.index + 1} ({ix.num_roads}差路)</Popup>
+              </Marker>
+            ))}
+          </MapContainer>
+        </div>
+
+        {/* Bottom panel */}
+        <div className="bg-white px-4 pt-3 pb-6 border-t border-gray-200 safe-area-bottom">
+          {destinationLat != null && destinationLng != null && (
+            <div className="mb-3 flex items-center gap-2 text-sm text-gray-700">
+              <Navigation size={14} className="text-primary" />
+              <span className="truncate">{destinationName ?? `${destinationLat.toFixed(4)}, ${destinationLng.toFixed(4)}`}</span>
+            </div>
+          )}
+
+          {routeError && (
+            <div className="mb-3 bg-red-50 text-red-600 text-xs rounded-lg px-3 py-2 flex items-center gap-2">
+              <AlertTriangle size={14} />
+              {routeError}
+            </div>
+          )}
+
+          {route && (
+            <div className="mb-3 grid grid-cols-3 gap-2 text-center text-sm">
+              <div>
+                <p className="text-gray-500 text-xs">距離</p>
+                <p className="font-bold">{(route.distance_m / 1000).toFixed(1)} km</p>
+              </div>
+              <div>
+                <p className="text-gray-500 text-xs">所要時間</p>
+                <p className="font-bold">{Math.round(route.duration_s / 60)}分</p>
+              </div>
+              <div>
+                <p className="text-gray-500 text-xs">交差点</p>
+                <p className="font-bold">{route.intersections.length}箇所</p>
+              </div>
+            </div>
+          )}
+
+          {!route ? (
+            <button
+              onClick={handleFetchRoute}
+              disabled={destinationLat == null || isLoadingRoute || !myLocation}
+              className="w-full bg-primary text-white font-bold py-3.5 rounded-2xl flex items-center justify-center gap-2 transition active:bg-primary/80 disabled:opacity-50"
+            >
+              {isLoadingRoute ? (
+                <>
+                  <Loader2 size={18} className="animate-spin" />
+                  ルート取得中...
+                </>
+              ) : (
+                <>
+                  <Navigation size={18} />
+                  ルートを取得
+                </>
+              )}
+            </button>
+          ) : (
+            <button
+              onClick={handleStartRiding}
+              className="w-full bg-success text-white font-bold py-3.5 rounded-2xl flex items-center justify-center gap-2 transition active:bg-success/80"
+            >
+              <CheckCircle size={18} />
+              走行開始
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ===== PHASE 2: Riding =====
   return (
     <div className="h-full bg-gray-900 flex flex-col relative overflow-hidden">
-      {/* Live camera preview */}
+      {/* Map view during riding */}
       <div className="flex-1 relative overflow-hidden">
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className="absolute inset-0 w-full h-full object-cover"
-        />
+        <MapContainer
+          center={currentLat != null ? [currentLat, currentLng!] : [35.6812, 139.7671]}
+          zoom={16}
+          style={{ height: '100%' }}
+          scrollWheelZoom={false}
+        >
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+          {/* Route line */}
+          {route && (
+            <Polyline
+              positions={route.geometry.map((c) => [c[0], c[1]] as [number, number])}
+              color="#2563eb"
+              weight={4}
+              opacity={0.7}
+            />
+          )}
+          {/* Intersection markers */}
+          {route?.intersections.map((ix) => (
+            <Marker
+              key={ix.index}
+              position={[ix.lat, ix.lng]}
+              icon={ix.stopped ? intersectionStoppedIcon : intersectionPendingIcon}
+            >
+              <Popup>
+                交差点 #{ix.index + 1}
+                {ix.stopped ? ' (停止済み)' : ''}
+              </Popup>
+            </Marker>
+          ))}
+          {/* Current position */}
+          {currentLat != null && (
+            <Marker position={[currentLat, currentLng!]} icon={defaultIcon}>
+              <Popup>現在地</Popup>
+            </Marker>
+          )}
+          {/* Destination */}
+          {destinationLat != null && destinationLng != null && (
+            <Marker position={[destinationLat, destinationLng]} icon={destinationIcon}>
+              <Popup>目的地</Popup>
+            </Marker>
+          )}
+        </MapContainer>
 
-        {/* Fallback when camera not available */}
-        {!camera.isStreaming && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="text-center text-gray-600">
-              <Camera size={64} className="mx-auto mb-3 opacity-30" />
-              <p className="text-sm opacity-50">
-                {camera.error ?? 'カメラを起動中...'}
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Recording indicator */}
-        {camera.isStreaming && (
-          <div className="absolute top-4 left-4 flex items-center gap-2 bg-black/50 rounded-full px-3 py-1.5">
-            <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
-            <span className="text-white text-xs font-mono">REC</span>
-          </div>
-        )}
-
-        {/* Timer */}
-        <div className="absolute top-4 right-4 bg-black/50 rounded-full px-3 py-1.5">
+        {/* Timer overlay */}
+        <div className="absolute top-4 right-4 bg-black/50 rounded-full px-3 py-1.5 z-[1000]">
           <span className="text-white text-sm font-mono">{formatTime(elapsedSeconds)}</span>
         </div>
 
         {/* Wake Lock badge */}
         {wakeLock.isActive && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-yellow-500/80 rounded-full px-3 py-1">
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-yellow-500/80 rounded-full px-3 py-1 z-[1000]">
             <span className="text-white text-[10px] font-bold">画面ON維持中</span>
           </div>
         )}
 
         {/* GPS error */}
         {gps.error && (
-          <div className="absolute top-14 inset-x-4">
+          <div className="absolute top-14 inset-x-4 z-[1000]">
             <div className="bg-red-600/90 text-white text-xs rounded-lg px-3 py-2 flex items-center gap-2">
               <AlertTriangle size={14} />
               {gps.error}
-            </div>
-          </div>
-        )}
-
-        {/* Violation alert overlay */}
-        {showAlert && (
-          <div className="absolute inset-x-0 top-1/3 flex justify-center z-10 animate-bounce">
-            <div className="bg-red-600 text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-2">
-              <Shield size={20} />
-              <span className="font-bold">違反を検知しました</span>
             </div>
           </div>
         )}
@@ -227,15 +510,12 @@ export function RidingPage() {
             </div>
             <p className="text-gray-400 text-xs">m</p>
           </div>
-          {/* Double-tap to simulate violation (debug) */}
-          <div className="text-center" onDoubleClick={handleSimulateViolation}>
-            <p className="text-gray-400 text-xs">違反</p>
-            <p
-              className={`text-2xl font-bold font-mono ${violationCount > 0 ? 'text-red-400' : 'text-white'}`}
-            >
-              {violationCount}
+          <div className="text-center">
+            <p className="text-gray-400 text-xs">一時停止</p>
+            <p className="text-white text-2xl font-bold font-mono">
+              {stoppedIntersections}/{totalIntersections}
             </p>
-            <p className="text-gray-400 text-xs">件</p>
+            <p className="text-gray-400 text-xs">箇所</p>
           </div>
         </div>
 

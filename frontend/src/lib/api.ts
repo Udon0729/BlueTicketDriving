@@ -14,14 +14,25 @@ export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   return fetch(`${API_BASE}${path}`, init)
 }
 
-/** Build a WebSocket URL for the given path (e.g. "/ws/camera?trip_id=xxx"). */
-export function apiWsUrl(path: string): string {
-  if (API_BASE) {
-    const url = new URL(API_BASE)
-    const wsProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${wsProtocol}//${url.host}${path}`
-  }
-  // Relative — use current page origin (works with Vite proxy in dev)
-  const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${wsProtocol}//${location.host}${path}`
+/** Search addresses via Nominatim geocoding API. */
+export async function searchAddress(
+  query: string,
+): Promise<Array<{ lat: number; lng: number; display_name: string }>> {
+  const params = new URLSearchParams({
+    q: query,
+    format: 'json',
+    countrycodes: 'jp',
+    limit: '5',
+  })
+  const res = await fetch(
+    `https://nominatim.openstreetmap.org/search?${params}`,
+    { headers: { 'Accept-Language': 'ja' } },
+  )
+  if (!res.ok) return []
+  const data = await res.json()
+  return data.map((item: { lat: string; lon: string; display_name: string }) => ({
+    lat: parseFloat(item.lat),
+    lng: parseFloat(item.lon),
+    display_name: item.display_name,
+  }))
 }

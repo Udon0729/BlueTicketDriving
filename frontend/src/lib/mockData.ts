@@ -19,14 +19,3 @@ export function formatDistance(meters: number): string {
   }
   return `${meters} m`
 }
-
-export function violationTypeLabel(
-  type: 'signal_ignore' | 'no_stop',
-): string {
-  switch (type) {
-    case 'signal_ignore':
-      return '信号無視'
-    case 'no_stop':
-      return '一時不停止'
-  }
-}

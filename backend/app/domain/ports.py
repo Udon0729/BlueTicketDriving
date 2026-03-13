@@ -6,10 +6,9 @@ Adapter layer provides concrete implementations.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Protocol
 
-from .models import GpsPoint, StopSign, TrafficSignal, Trip, Violation
+from .models import GpsPoint, IntersectionResult, Route, Trip
 
 
 # ---------------------------------------------------------------------------
@@ -28,10 +27,13 @@ class GpsRepository(Protocol):
     def append_points(self, trip_id: str, points: list[GpsPoint]) -> None: ...
 
 
-class ViolationRepository(Protocol):
-    def get_violations(self, trip_id: str) -> list[Violation]: ...
-    def save_violation(self, trip_id: str, violation: Violation) -> None: ...
-    def last_violation_time(self, trip_id: str, vtype: str) -> datetime | None: ...
+class RouteRepository(Protocol):
+    def save_route(self, trip_id: str, route: Route) -> None: ...
+    def get_route(self, trip_id: str) -> Route | None: ...
+    def save_intersection_results(
+        self, trip_id: str, results: list[IntersectionResult],
+    ) -> None: ...
+    def get_intersection_results(self, trip_id: str) -> list[IntersectionResult]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -39,14 +41,8 @@ class ViolationRepository(Protocol):
 # ---------------------------------------------------------------------------
 
 
-class StopSignSource(Protocol):
-    async def get_stop_signs(self, lat: float, lng: float) -> list[StopSign]: ...
-
-
-class TrafficSignalSource(Protocol):
-    async def get_traffic_signals(self, lat: float, lng: float) -> list[TrafficSignal]: ...
-
-
-class RedSignalAnalyzer(Protocol):
-    """Analyze a JPEG frame and return True if a red traffic signal is detected."""
-    async def detect(self, frame_jpeg: bytes) -> bool: ...
+class RoutingService(Protocol):
+    """ルーティングサービス"""
+    async def get_bicycle_route(
+        self, origin: tuple[float, float], destination: tuple[float, float],
+    ) -> Route: ...

@@ -40,23 +40,65 @@ export function useGpsTracker() {
         })
 
         if (res.ok) {
-          // Mark as synced
           const ids = unsynced.map((p) => p.id!).filter(Boolean)
           await db.gpsPoints.where('id').anyOf(ids).modify({ synced: true })
 
-          // Handle violations from server
           const data = await res.json()
-          if (data.violations?.length > 0) {
-            for (const v of data.violations) {
-              await db.violations.add({
-                tripId,
-                type: v.type,
-                detectedAt: v.detected_at,
-                lat: v.lat,
-                lng: v.lng,
-              })
-              useRideStore.getState().incrementViolations()
+
+          if (data.rerouted) {
+            // Reroute happened — intersection indices changed.
+            // Skip incremental intersection_updates (they reference new indices
+            // that don't exist in IndexedDB yet). Instead, fetch the full updated
+            // trip and replace all local route/intersection data.
+            try {
+              const tripRes = await apiFetch(`/api/trips/${tripId}`)
+              if (tripRes.ok) {
+                const tripData = await tripRes.json()
+                if (tripData.route) {
+                  useRideStore.getState().setRoute(tripData.route)
+
+                  await db.routes.put({
+                    tripId,
+                    geometry: tripData.route.geometry,
+                    distanceM: tripData.route.distance_m,
+                    durationS: tripData.route.duration_s,
+                  })
+
+                  await db.intersectionResults.where('tripId').equals(tripId).delete()
+                  for (const ix of tripData.route.intersections) {
+                    await db.intersectionResults.add({
+                      tripId,
+                      index: ix.index,
+                      lat: ix.lat,
+                      lng: ix.lng,
+                      numRoads: ix.num_roads,
+                      stopped: ix.stopped,
+                      minSpeedKmh: ix.min_speed_kmh,
+                    })
+                  }
+                }
+              }
+            } catch {
+              // Reroute data will sync on next interval
             }
+          } else if (data.intersection_updates?.length > 0) {
+            // Normal case — apply incremental intersection updates
+            for (const update of data.intersection_updates) {
+              await db.intersectionResults
+                .where('[tripId+index]')
+                .equals([tripId, update.index])
+                .modify({
+                  stopped: update.stopped,
+                  minSpeedKmh: update.min_speed_kmh,
+                })
+            }
+
+            const allResults = await db.intersectionResults
+              .where('tripId')
+              .equals(tripId)
+              .toArray()
+            const stopped = allResults.filter((r) => r.stopped).length
+            useRideStore.getState().updateIntersections(allResults.length, stopped)
           }
         }
       } catch {
@@ -184,6 +226,20 @@ export function useGpsTracker() {
         if (res.ok) {
           const ids = unsynced.map((p) => p.id!).filter(Boolean)
           await db.gpsPoints.where('id').anyOf(ids).modify({ synced: true })
+
+          // Process final intersection results so ResultPage is accurate
+          const data = await res.json()
+          if (data.intersection_updates?.length > 0) {
+            for (const update of data.intersection_updates) {
+              await db.intersectionResults
+                .where('[tripId+index]')
+                .equals([tripId, update.index])
+                .modify({
+                  stopped: update.stopped,
+                  minSpeedKmh: update.min_speed_kmh,
+                })
+            }
+          }
         }
       }
     } catch {
