@@ -1,7 +1,7 @@
 """OSRMルーティングゲートウェイ — 自転車ルートの取得と交差点の抽出。"""
 
 import logging
-import math
+import time
 
 import httpx
 
@@ -51,7 +51,7 @@ class OsrmGateway:
         coords = f"{origin[1]},{origin[0]};{destination[1]},{destination[0]}"
         url = (
             f"{self._base_url}/route/v1/bicycle/{coords}"
-            "?steps=true&geometries=geojson&overview=full"
+            "?steps=true&geometries=geojson&overview=full&annotations=nodes"
         )
 
         try:
@@ -82,8 +82,22 @@ class OsrmGateway:
         geojson_coords = osrm_route["geometry"]["coordinates"]
         geometry = [(c[1], c[0]) for c in geojson_coords]  # (緯度, 経度)に変換
 
-        # ステップから交差点を抽出
+        # annotation.nodes から座標→OSMノードIDのマッピングを構築
+        annotation_nodes: list[int] = []
+        for leg in osrm_route["legs"]:
+            annotation_nodes.extend(
+                leg.get("annotation", {}).get("nodes", [])
+            )
+        coord_to_node: dict[tuple[float, float], int] = {}
+        for i, node_id in enumerate(annotation_nodes):
+            if i < len(geojson_coords):
+                c = geojson_coords[i]
+                key = (round(c[1], 6), round(c[0], 6))
+                coord_to_node[key] = node_id
+
+        # ステップから交差点を抽出（OSMノードIDも紐づけ）
         intersections: list[Intersection] = []
+        isec_node_ids: list[int | None] = []
         seen: set[tuple[float, float]] = set()
         idx = 0
 
@@ -107,12 +121,13 @@ class OsrmGateway:
                             num_roads=len(bearings),
                         )
                     )
+                    isec_node_ids.append(coord_to_node.get(key))
                     idx += 1
 
         # 公道フィルタリング
         if self._filter_non_public_roads and intersections:
             intersections = await self._filter_public_road_intersections(
-                intersections,
+                intersections, isec_node_ids,
             )
 
         return Route(
@@ -123,16 +138,30 @@ class OsrmGateway:
         )
 
     # ------------------------------------------------------------------
-    # Overpass API による公道フィルタリング
+    # Overpass API による公道フィルタリング（OSMノードIDベース）
     # ------------------------------------------------------------------
 
     async def _filter_public_road_intersections(
         self,
         intersections: list[Intersection],
+        node_ids: list[int | None],
     ) -> list[Intersection]:
         """Overpass APIで公道上の交差点のみを抽出する。失敗時はフィルタなしで返す。"""
+        # ノードIDが取れた交差点のみフィルタ対象
+        known = [(isec, nid) for isec, nid in zip(intersections, node_ids) if nid]
+        unknown = [isec for isec, nid in zip(intersections, node_ids) if not nid]
+
+        if not known:
+            logger.info("公道フィルタ: OSMノードID取得不可 — スキップ")
+            return intersections
+
         try:
-            public_ways = await self._fetch_public_roads(intersections)
+            t0 = time.monotonic()
+            public_node_set = await self._query_public_road_nodes(
+                [nid for _, nid in known],
+            )
+            elapsed = time.monotonic() - t0
+            logger.info("Overpassクエリ: %.1f秒", elapsed)
         except Exception:
             logger.warning(
                 "Overpass APIクエリ失敗 — フィルタなしで全交差点を返します",
@@ -141,11 +170,9 @@ class OsrmGateway:
             return intersections
 
         before = len(intersections)
-        filtered = [
-            isec
-            for isec in intersections
-            if self._is_near_public_road(isec.lat, isec.lng, public_ways)
-        ]
+        filtered = [isec for isec, nid in known if nid in public_node_set]
+        # ノードID不明の交差点も残す（安全側に倒す）
+        filtered.extend(unknown)
         # 連番を振り直す
         result = [
             Intersection(index=i, lat=f.lat, lng=f.lng, num_roads=f.num_roads)
@@ -153,33 +180,25 @@ class OsrmGateway:
         ]
         logger.info(
             "公道フィルタ: %d → %d 交差点 (%d 除外)",
-            before,
-            len(result),
-            before - len(result),
+            before, len(result), before - len(result),
         )
         return result
 
-    async def _fetch_public_roads(
+    async def _query_public_road_nodes(
         self,
-        intersections: list[Intersection],
-    ) -> list[list[tuple[float, float]]]:
-        """交差点群のバウンディングボックス内の公道ジオメトリを取得。"""
-        lats = [i.lat for i in intersections]
-        lngs = [i.lng for i in intersections]
-        pad = 0.002  # ~200m のパディング
-        bbox = (
-            f"{min(lats) - pad},{min(lngs) - pad},"
-            f"{max(lats) + pad},{max(lngs) + pad}"
-        )
-
+        node_ids: list[int],
+    ) -> set[int]:
+        """指定OSMノードのうち公道wayに属するもののIDセットを返す。"""
+        id_str = ",".join(str(n) for n in node_ids)
         highway_regex = "|".join(PUBLIC_ROAD_TYPES)
         query = (
-            f'[out:json][timeout:25][bbox:{bbox}];'
-            f'way["highway"~"^({highway_regex})$"];'
-            f'out geom;'
+            f'[out:json][timeout:10];'
+            f'node(id:{id_str})->.isec;'
+            f'way(bn.isec)["highway"~"^({highway_regex})$"];'
+            f'out body;'
         )
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
                 self._overpass_url,
                 data={"data": query},
@@ -187,46 +206,18 @@ class OsrmGateway:
             resp.raise_for_status()
             data = resp.json()
 
-        ways: list[list[tuple[float, float]]] = []
+        # 返ってきた公道wayに含まれるノードIDを集計
+        node_id_set = set(node_ids)
+        public_nodes: set[int] = set()
         for element in data.get("elements", []):
             if element.get("type") != "way":
                 continue
-            geom = element.get("geometry", [])
-            coords = [(n["lat"], n["lon"]) for n in geom]
-            if coords:
-                ways.append(coords)
+            for nid in element.get("nodes", []):
+                if nid in node_id_set:
+                    public_nodes.add(nid)
 
-        logger.info("Overpass: bbox内に公道 %d 本を取得", len(ways))
-        return ways
-
-    def _is_near_public_road(
-        self,
-        lat: float,
-        lng: float,
-        public_ways: list[list[tuple[float, float]]],
-    ) -> bool:
-        """交差点が公道のいずれかのノードから閾値以内にあるか判定。"""
-        # 度数での高速プレフィルタ（~30m相当、日本の緯度）
-        deg_threshold = 0.0003
-        threshold = self._public_road_radius_m
-        for way in public_ways:
-            for wlat, wlng in way:
-                if abs(lat - wlat) > deg_threshold or abs(lng - wlng) > deg_threshold:
-                    continue
-                if _haversine_m(lat, lng, wlat, wlng) <= threshold:
-                    return True
-        return False
-
-
-def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    """2点間の距離をメートルで計算（Haversine公式）。"""
-    R = 6_371_000
-    dlat = math.radians(lat2 - lat1)
-    dlng = math.radians(lng2 - lng1)
-    a = (
-        math.sin(dlat / 2) ** 2
-        + math.cos(math.radians(lat1))
-        * math.cos(math.radians(lat2))
-        * math.sin(dlng / 2) ** 2
-    )
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        logger.info(
+            "Overpass: %d ノード中 %d が公道上",
+            len(node_ids), len(public_nodes),
+        )
+        return public_nodes
