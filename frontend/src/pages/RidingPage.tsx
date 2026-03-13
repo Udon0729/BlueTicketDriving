@@ -240,7 +240,11 @@ export function RidingPage() {
         stoppedIntersections: 0,
       })
     } catch (e) {
-      setRouteError(e instanceof Error ? e.message : 'ルート取得に失敗しました')
+      if (e instanceof TypeError && (e.message === 'Failed to fetch' || e.message === 'NetworkError when attempting to fetch resource.')) {
+        setRouteError('サーバーに接続できません。バックエンドが起動しているか確認してください。')
+      } else {
+        setRouteError(e instanceof Error ? e.message : 'ルート取得に失敗しました')
+      }
     } finally {
       setIsLoadingRoute(false)
     }

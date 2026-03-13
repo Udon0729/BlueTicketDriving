@@ -27,7 +27,11 @@ uv venv .venv && uv pip install -r requirements.txt  # first time
 
 ### Dev Setup
 
-Run both servers concurrently:
+```bash
+make dev  # フロントエンド + バックエンドを同時起動（プロジェクトルートから実行）
+```
+
+個別に起動する場合:
 1. `cd backend && .venv/bin/uvicorn app.main:app --port 8000 --reload`
 2. `cd frontend && npm run dev`
 
