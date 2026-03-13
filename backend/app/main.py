@@ -3,11 +3,9 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from app.adapters.memory_repo import InMemoryRepository
 from app.adapters.osrm_gateway import OsrmGateway
@@ -20,9 +18,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 settings = Settings()
-
-# フロントエンドのビルド済みディレクトリ
-FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
 
 @asynccontextmanager
@@ -94,20 +89,3 @@ async def log_requests(request, call_next):
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
-
-
-# フロントエンドの静的ファイル配信（ビルド済みdistがある場合）
-if FRONTEND_DIST.exists():
-    from fastapi.responses import FileResponse
-
-    # SPAフォールバック: APIに該当しないパスはすべてindex.htmlを返す
-    @app.get("/{full_path:path}")
-    async def serve_spa(full_path: str):
-        file_path = FRONTEND_DIST / full_path
-        if file_path.is_file():
-            return FileResponse(file_path)
-        return FileResponse(FRONTEND_DIST / "index.html")
-
-    logger.info("フロントエンド配信: %s", FRONTEND_DIST)
-else:
-    logger.info("フロントエンドdistが見つかりません: %s", FRONTEND_DIST)

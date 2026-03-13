@@ -11,6 +11,9 @@ node_modules/
 dist/
 dist-ssr/
 
+# SSL証明書
+certs/
+
 # Environment
 .env
 .env.*

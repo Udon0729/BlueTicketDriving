@@ -1,23 +1,25 @@
-.PHONY: dev dev-frontend dev-backend build
+.PHONY: dev dev-frontend dev-backend ssl-cert
 
-# フロントエンドビルド + バックエンド起動（HTTPS、推奨）
-# ブラウザから https://<サーバーIP>:8000 でアクセス
+# フロントエンド + バックエンド(HTTPS)を同時起動
 dev:
-	cd frontend && npm run build
-	cd backend && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload \
-		--ssl-keyfile certs/key.pem --ssl-certfile certs/cert.pem
-
-# フロントエンド + バックエンドを別々に起動（Viteプロキシ使用、ローカル開発用）
-dev-local:
 	@trap 'kill 0' EXIT; \
-	cd backend && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload & \
+	cd backend && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload \
+		--ssl-keyfile certs/key.pem --ssl-certfile certs/cert.pem & \
 	cd frontend && npm run dev & \
 	wait
 
-# フロントエンドビルドのみ
-build:
-	cd frontend && npm run build
+# フロントエンドのみ
+dev-frontend:
+	cd frontend && npm run dev
 
-# バックエンドのみ（HTTP）
+# バックエンドのみ（HTTPS）
 dev-backend:
-	cd backend && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+	cd backend && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload \
+		--ssl-keyfile certs/key.pem --ssl-certfile certs/cert.pem
+
+# 自己署名SSL証明書を生成（初回のみ）
+ssl-cert:
+	mkdir -p backend/certs
+	openssl req -x509 -newkey rsa:2048 \
+		-keyout backend/certs/key.pem -out backend/certs/cert.pem \
+		-days 365 -nodes -subj "/CN=localhost"
