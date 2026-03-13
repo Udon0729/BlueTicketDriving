@@ -54,14 +54,12 @@ export default defineConfig({
     host: true,
     proxy: {
       '/api': {
-        target: 'https://localhost:8000',
+        target: 'http://localhost:8000',
         changeOrigin: true,
-        secure: false,
       },
       '/ws': {
-        target: 'wss://localhost:8000',
+        target: 'ws://localhost:8000',
         ws: true,
-        secure: false,
       },
     },
   },
