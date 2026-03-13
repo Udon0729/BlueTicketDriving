@@ -1,5 +1,6 @@
 """FastAPIアプリケーション — クリーンアーキテクチャDI配線。"""
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -12,6 +13,9 @@ from app.adapters.routers import gps, trips
 from app.config import Settings
 from app.usecases.gps_analysis import GpsAnalysisUseCase
 from app.usecases.route_planning import RoutePlanningUseCase
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 settings = Settings()
 
@@ -47,6 +51,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.repo = repo
     app.state.gps_usecase = gps_usecase
     app.state.route_usecase = route_usecase
+
+    # 起動時に登録済みルート一覧をログ出力
+    logger.info("=== 登録済みエンドポイント ===")
+    for route in app.routes:
+        methods = getattr(route, "methods", None)
+        path = getattr(route, "path", None)
+        if methods and path:
+            logger.info("  %s %s", ", ".join(methods), path)
+    logger.info("=============================")
 
     yield
 
